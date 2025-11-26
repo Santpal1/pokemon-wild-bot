@@ -1,9 +1,35 @@
+import os
+import threading
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-import os
 
-# Load the .env file
+from flask import Flask  # tiny web server for Render
+
+from PIL import Image, ImageDraw, ImageFont
+import requests
+from io import BytesIO
+
+
+# =============== FLASK WEB SERVER (FOR RENDER) ===============
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+
+def run_flask():
+    # Render sets PORT env var
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+
+
+# =============== DISCORD BOT SETUP ===============
+
+# Load .env locally; on Render, TOKEN comes from env variables
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -21,10 +47,6 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member):
-    from PIL import Image, ImageDraw, ImageFont
-    import requests
-    from io import BytesIO
-
     # Load template
     template = Image.open("image.png").convert("RGBA")
 
@@ -58,4 +80,11 @@ async def on_member_join(member):
         await channel.send(file=discord.File(output_path))
 
 
-bot.run(TOKEN)
+# =============== START FLASK + BOT TOGETHER ===============
+
+if __name__ == "__main__":
+    # Start Flask server in a background thread (for Render web service)
+    threading.Thread(target=run_flask, daemon=True).start()
+
+    # Start Discord bot (main thread)
+    bot.run(TOKEN)
