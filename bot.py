@@ -58,6 +58,10 @@ def save_events(events):
         json.dump(events, f, indent=2)
 
 events = load_events()
+# =============== IMAGE POLL STORAGE ===============
+
+active_polls = {}
+
 
 
 # =============== EVENT CHECKER TASK ===============
@@ -295,6 +299,199 @@ async def event_help(ctx):
     )
     
     await ctx.send(embed=embed)
+    
+@bot.command(name="imagepoll")
+async def image_poll(
+    ctx,
+    title: str,
+    img1: str,
+    img2: str,
+    img3: str = None,
+    img4: str = None,
+    duration: int = None
+):
+    """
+    Create a banner-style image poll.
+
+    Example:
+    !imagepoll "Best Banner"
+    https://img1.png
+    https://img2.png
+    https://img3.png
+    5
+    """
+
+    image_urls = [img1, img2]
+
+    if img3:
+        image_urls.append(img3)
+
+    if img4:
+        image_urls.append(img4)
+
+    embeds = []
+
+    for i, url in enumerate(image_urls):
+        emb = discord.Embed(description=f"**Option {i+1}**")
+        emb.set_image(url=url)
+        emb.set_footer(text="Votes: 0")
+        embeds.append(emb)
+
+    view = ImagePollView(title, image_urls)
+
+    msg = await ctx.send(
+        content=f"**{title}**",
+        embeds=embeds,
+        view=view
+    )
+
+    view.message = msg
+    active_polls[msg.id] = view
+
+    if duration:
+        bot.loop.create_task(close_image_poll(msg.id, duration))
+
+
+
+# =============== IMAGE POLL SYSTEM ===============
+
+class ImagePollView(discord.ui.View):
+    def __init__(self, title, options):
+        super().__init__(timeout=None)
+
+        self.title = title
+        self.options = [
+            {"label": label, "img": img, "votes": 0}
+            for label, img in options
+        ]
+
+        self.voters = {}   # user_id -> option index
+        self.message = None
+        self.closed = False
+
+        for idx, opt in enumerate(options):
+            self.add_item(ImagePollButton(idx, opt[0]))
+
+
+# =============== IMAGE POLL SYSTEM ===============
+
+class ImagePollView(discord.ui.View):
+    def __init__(self, title, image_urls):
+        super().__init__(timeout=None)
+
+        self.title = title
+        self.options = [
+            {"img": url, "votes": 0}
+            for url in image_urls
+        ]
+
+        self.voters = {}   # user_id -> option index
+        self.message = None
+        self.closed = False
+
+        for idx in range(len(image_urls)):
+            self.add_item(ImagePollButton(idx))
+
+
+class ImagePollButton(discord.ui.Button):
+    def __init__(self, index):
+        super().__init__(
+            label=f"{index+1}️⃣",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"imgpoll_{index}"
+        )
+        self.index = index
+
+    async def callback(self, interaction: discord.Interaction):
+
+        view: ImagePollView = self.view
+
+        if view.closed:
+            return await interaction.response.send_message(
+                "❌ This poll is already closed.",
+                ephemeral=True
+            )
+
+        uid = interaction.user.id
+        prev_vote = view.voters.get(uid)
+
+        if prev_vote == self.index:
+            view.voters.pop(uid)
+            view.options[self.index]["votes"] -= 1
+            msg = f"Removed vote for **Option {self.index+1}**."
+        else:
+            if prev_vote is not None:
+                view.options[prev_vote]["votes"] -= 1
+
+            view.voters[uid] = self.index
+            view.options[self.index]["votes"] += 1
+            msg = f"Voted for **Option {self.index+1}**."
+
+        await update_image_poll(view)
+        await interaction.response.send_message(msg, ephemeral=True)
+
+
+async def update_image_poll(view: ImagePollView):
+
+    embeds = []
+
+    for i, opt in enumerate(view.options):
+        emb = discord.Embed(description=f"**Option {i+1}**")
+        emb.set_image(url=opt["img"])
+        emb.set_footer(text=f"Votes: {opt['votes']}")
+        embeds.append(emb)
+
+    await view.message.edit(embeds=embeds, view=view)
+
+
+async def close_image_poll(message_id, minutes):
+
+    await asyncio.sleep(minutes * 60)
+
+    view = active_polls.get(message_id)
+    if not view:
+        return
+
+    view.closed = True
+
+    for item in view.children:
+        item.disabled = True
+
+    max_votes = max(o["votes"] for o in view.options)
+    winners = [
+        f"Option {i+1}"
+        for i, o in enumerate(view.options)
+        if o["votes"] == max_votes
+    ]
+
+    result = "Winner: " + ", ".join(winners) if max_votes else "No votes."
+
+    await view.message.edit(
+        content=f"**{view.title}** — Poll closed. {result}",
+        view=view
+    )
+
+
+    await asyncio.sleep(minutes * 60)
+
+    view = active_polls.get(message_id)
+    if not view:
+        return
+
+    view.closed = True
+
+    for item in view.children:
+        item.disabled = True
+
+    max_votes = max(o["votes"] for o in view.options)
+    winners = [o["label"] for o in view.options if o["votes"] == max_votes]
+
+    result = "Winner: " + ", ".join(winners) if max_votes else "No votes."
+
+    await view.message.edit(
+        content=f"**{view.title}** — Poll closed. {result}",
+        view=view
+    )
 
 
 # =============== START FLASK + BOT TOGETHER ===============
